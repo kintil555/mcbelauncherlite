@@ -2,6 +2,8 @@ name: 🏗️ Build & Release MCLite Launcher
 
 on:
   push:
+    branches:
+      - main               # Trigger otomatis saat push ke main
     tags:
       - 'v*.*.*'           # Trigger saat push tag versi, misal: v1.0.0
   workflow_dispatch:        # Bisa di-trigger manual dari GitHub UI
