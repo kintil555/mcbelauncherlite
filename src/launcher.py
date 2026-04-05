@@ -599,7 +599,7 @@ class PVPInjector:
     def _set_motion_blur_registry(self, enabled: bool) -> tuple[bool, str]:
         """
         Fallback: set motion blur via Minecraft options.txt
-        File ada di %APPDATA%\Minecraft Bedrock\users\...\options.txt
+        File ada di %APPDATA%/Minecraft Bedrock/users/.../options.txt
         """
         try:
             # Cari options.txt Minecraft
