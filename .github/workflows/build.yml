@@ -1,0 +1,234 @@
+name: 🏗️ Build & Release MCLite Launcher
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'           # Trigger saat push tag versi, misal: v1.0.0
+  workflow_dispatch:        # Bisa di-trigger manual dari GitHub UI
+    inputs:
+      version:
+        description: 'Versi release (contoh: 1.0.0)'
+        required: false
+        default: 'dev'
+
+env:
+  APP_NAME: MCLiteLauncher
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  build:
+    name: 🔨 Build EXE & Installer
+    runs-on: windows-latest      # WAJIB Windows untuk ctypes.windll, PyQt6 Windows
+
+    steps:
+      # 1. Checkout kode
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      # 2. Setup Python
+      - name: 🐍 Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      # 3. Install dependencies
+      - name: 📦 Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # 4. Buat placeholder icon jika tidak ada
+      - name: 🎨 Create Placeholder Icon (if not exists)
+        shell: python
+        run: |
+          import os, struct, zlib
+          
+          os.makedirs("assets", exist_ok=True)
+          
+          # Buat ICO 32x32 sederhana (hijau Minecraft)
+          # PNG 32x32 solid hijau
+          def make_png(w, h, r, g, b):
+              def chunk(name, data):
+                  c = zlib.crc32(name + data) & 0xffffffff
+                  return struct.pack('>I', len(data)) + name + data + struct.pack('>I', c)
+              sig = b'\x89PNG\r\n\x1a\n'
+              ihdr_data = struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)
+              ihdr = chunk(b'IHDR', ihdr_data)
+              row = b'\x00' + bytes([r, g, b] * w)
+              raw = row * h
+              idat = chunk(b'IDAT', zlib.compress(raw))
+              iend = chunk(b'IEND', b'')
+              return sig + ihdr + idat + iend
+          
+          png_data = make_png(32, 32, 76, 175, 80)  # #4CAF50 hijau minecraft
+          
+          # Buat ICO dari PNG
+          ico_header = struct.pack('<HHH', 0, 1, 1)  # Reserved, Type=ICO, Count=1
+          # Image entry: width, height, colorCount, reserved, planes, bitCount, bytesInRes, imageOffset
+          offset = 6 + 16  # header + 1 entry
+          ico_entry = struct.pack('<BBBBHHII', 32, 32, 0, 0, 1, 24, len(png_data), offset)
+          ico_bytes = ico_header + ico_entry + png_data
+          
+          with open('assets/icon.ico', 'wb') as f:
+              f.write(ico_bytes)
+          
+          print(f"Icon created: {len(ico_bytes)} bytes")
+
+      # 5. Build EXE dengan PyInstaller
+      - name: 🔧 Build EXE with PyInstaller
+        run: |
+          pyinstaller MCLiteLauncher.spec --clean --noconfirm
+        
+      # 6. Verifikasi hasil build
+      - name: ✅ Verify Build Output
+        run: |
+          if (Test-Path "dist\MCLiteLauncher\MCLiteLauncher.exe") {
+            $size = (Get-Item "dist\MCLiteLauncher\MCLiteLauncher.exe").Length / 1MB
+            Write-Host "✅ EXE built successfully: $([math]::Round($size, 2)) MB"
+          } else {
+            Write-Error "❌ EXE not found!"
+            exit 1
+          }
+        shell: powershell
+
+      # 7. Install NSIS untuk membuat installer
+      - name: 🔧 Install NSIS
+        run: |
+          choco install nsis --no-progress -y
+        shell: powershell
+
+      # 8. Build installer NSIS
+      - name: 📦 Build NSIS Installer
+        run: |
+          # Pastikan NSIS ada di PATH
+          $env:PATH += ";C:\Program Files (x86)\NSIS"
+          
+          # Buat file LICENSE jika belum ada
+          if (-not (Test-Path "LICENSE")) {
+            "MIT License - MCLite Launcher - Open Source" | Out-File -FilePath "LICENSE" -Encoding utf8
+          }
+          
+          # Buat bitmap placeholder untuk wizard NSIS jika tidak ada
+          if (-not (Test-Path "assets\header.bmp")) {
+            # NSIS butuh BMP 150x57 untuk header dan 164x314 untuk wizard
+            # Buat dengan PowerShell/GDI+
+            Add-Type -AssemblyName System.Drawing
+            
+            # Header BMP 150x57
+            $bmp1 = New-Object System.Drawing.Bitmap(150, 57)
+            $g1 = [System.Drawing.Graphics]::FromImage($bmp1)
+            $g1.Clear([System.Drawing.Color]::FromArgb(13, 40, 13))
+            $g1.Dispose()
+            $bmp1.Save("assets\header.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
+            $bmp1.Dispose()
+            
+            # Wizard BMP 164x314
+            $bmp2 = New-Object System.Drawing.Bitmap(164, 314)
+            $g2 = [System.Drawing.Graphics]::FromImage($bmp2)
+            $g2.Clear([System.Drawing.Color]::FromArgb(13, 40, 13))
+            $g2.Dispose()
+            $bmp2.Save("assets\wizard.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
+            $bmp2.Dispose()
+          }
+          
+          makensis installer\MCLiteLauncher.nsi
+          
+          if (Test-Path "MCLiteLauncher-Setup-v1.0.0.exe") {
+            $size = (Get-Item "MCLiteLauncher-Setup-v1.0.0.exe").Length / 1MB
+            Write-Host "✅ Installer built: $([math]::Round($size, 2)) MB"
+          } else {
+            Write-Error "❌ Installer not found!"
+            exit 1
+          }
+        shell: powershell
+
+      # 9. Upload artifact untuk didownload dari Actions
+      - name: 📤 Upload EXE Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MCLiteLauncher-exe
+          path: dist/MCLiteLauncher/
+          retention-days: 30
+
+      - name: 📤 Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MCLiteLauncher-Setup
+          path: MCLiteLauncher-Setup-*.exe
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────
+  release:
+    name: 🚀 Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    # Hanya buat release saat ada tag versi
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📥 Download Installer Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MCLiteLauncher-Setup
+          path: release/
+
+      - name: 📥 Download EXE Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MCLiteLauncher-exe
+          path: release/exe/
+
+      # Zip portable version
+      - name: 📦 Zip Portable EXE
+        run: |
+          cd release/exe
+          zip -r ../MCLiteLauncher-Portable-${{ github.ref_name }}.zip .
+          cd ../..
+
+      - name: 🏷️ Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "MCLite Launcher ${{ github.ref_name }}"
+          body: |
+            ## 🎮 MCLite Launcher ${{ github.ref_name }}
+            
+            **Launcher ringan untuk Minecraft Bedrock Edition (GDK) - Windows 10/11**
+            
+            ### ✨ Fitur
+            - 🧹 **Memory Leak Fix** — Trim otomatis working set Minecraft via `EmptyWorkingSet()` Windows API (mengatasi memory leak sejak migrasi UWP→GDK di v1.21.120+)
+            - ⚡ **Performance Boost** — Set CPU priority, timer resolution optimization, CPU affinity
+            - 📊 **FPS Counter Overlay** — Tampil di atas Minecraft, menampilkan FPS, RAM, CPU%
+            - 🔧 **Bug Fixes** — Nonaktifkan "Improved Input Response" (penyebab memory leak parah), flush DNS
+            - 🗺️ **GDK Support** — Auto-detect path Minecraft GDK (AppxPackage)
+            
+            ### 📥 Download
+            | File | Keterangan |
+            |------|-----------|
+            | `MCLiteLauncher-Setup-*.exe` | **Installer** (direkomendasikan) — bisa pilih disk/drive |
+            | `MCLiteLauncher-Portable-*.zip` | **Portable** — ekstrak & jalankan langsung |
+            
+            ### ⚠️ Catatan
+            - Minecraft Bedrock harus sudah terinstall (via Xbox App / Microsoft Store)
+            - Butuh Windows 10/11 64-bit
+            - Jalankan sebagai Administrator untuk fitur memory trimming
+            
+            ### 🔧 Cara Install
+            1. Download `MCLiteLauncher-Setup-*.exe`
+            2. Jalankan installer, pilih drive tujuan
+            3. Setelah install, jalankan MCLite Launcher
+            4. Klik "Auto Detect" untuk menemukan Minecraft
+            5. Klik "Launch Minecraft" — selesai!
+          files: |
+            release/MCLiteLauncher-Setup-*.exe
+            release/MCLiteLauncher-Portable-${{ github.ref_name }}.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
