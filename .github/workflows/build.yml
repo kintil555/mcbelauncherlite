@@ -138,12 +138,25 @@ jobs:
           
           makensis installer\MCLiteLauncher.nsi
           
-          if (Test-Path "MCLiteLauncher-Setup-v1.0.0.exe") {
-            $size = (Get-Item "MCLiteLauncher-Setup-v1.0.0.exe").Length / 1MB
-            Write-Host "✅ Installer built: $([math]::Round($size, 2)) MB"
+          # Installer output di folder installer/, pindah ke root
+          $installerSrc = Get-ChildItem -Path "installer" -Filter "MCLiteLauncher-Setup-*.exe" | Select-Object -First 1
+          if ($installerSrc) {
+            Move-Item $installerSrc.FullName "."
+            $installer = Get-ChildItem -Filter "MCLiteLauncher-Setup-*.exe" | Select-Object -First 1
+            $size = $installer.Length / 1MB
+            Write-Host "✅ Installer built: $([math]::Round($size, 2)) MB - $($installer.Name)"
+          } elseif (Test-Path "MCLiteLauncher-Setup-*.exe") {
+            Write-Host "✅ Installer already in root"
           } else {
-            Write-Error "❌ Installer not found!"
-            exit 1
+            # Cari di semua subfolder
+            $found = Get-ChildItem -Recurse -Filter "MCLiteLauncher-Setup-*.exe" | Select-Object -First 1
+            if ($found) {
+              Move-Item $found.FullName "."
+              Write-Host "✅ Installer found and moved: $($found.Name)"
+            } else {
+              Write-Error "❌ Installer not found!"
+              exit 1
+            }
           }
         shell: powershell
 
